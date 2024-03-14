@@ -1,16 +1,18 @@
 import os
-from fastapi import APIRouter, FastAPI, WebSocket,  Request, BackgroundTasks, HTTPException, WebSocketDisconnect, Depends
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends
 import uuid
-from rejson import Client, Path
-from ..schema.chat import Chat
 from ..socket.connection import ConnectionManager
 from ..socket.utils import get_token
+import time
 from ..redis.producer import Producer
 from ..redis.config import Redis
+from ..schema.chat import Chat
+from rejson import Path
 
 chat = APIRouter()
 manager = ConnectionManager()
 redis = Redis()
+
 
 # @route   POST /token
 # @desc    Route to generate chat token
@@ -25,14 +27,15 @@ async def token_generator(name: str, request: Request):
         raise HTTPException(status_code=400, detail={
             "loc": "name",  "msg": "Enter a valid name"})
 
-    # Create new chat session
+    # Create nee chat session
     json_client = redis.create_rejson_connection()
-
     chat_session = Chat(
         token=token,
         messages=[],
         name=name
     )
+
+    print(chat_session.dict())
 
     # Store chat session in redis JSON with the token as key
     json_client.jsonset(str(token), Path.rootPath(), chat_session.dict())
@@ -41,8 +44,8 @@ async def token_generator(name: str, request: Request):
     redis_client = await redis.create_connection()
     await redis_client.expire(str(token), 3600)
 
-
     return chat_session.dict()
+
 
 # @route   POST /refresh_token
 # @desc    Route to refresh token
@@ -55,7 +58,7 @@ async def refresh_token(request: Request):
 
 
 # @route   Websocket /chat
-# @desc    Socket for chatbot
+# @desc    Socket for chat bot
 # @access  Public
 
 @chat.websocket("/chat")
@@ -63,11 +66,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Depends(get_toke
     await manager.connect(websocket)
     redis_client = await redis.create_connection()
     producer = Producer(redis_client)
+    json_client = redis.create_rejson_connection()
 
     try:
         while True:
             data = await websocket.receive_text()
-            print(data)
             stream_data = {}
             stream_data[token] = data
             await producer.add_to_stream(stream_data, "message_channel")
